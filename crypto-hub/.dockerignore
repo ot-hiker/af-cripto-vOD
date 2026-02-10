@@ -1,0 +1,14 @@
+node_modules
+*/node_modules
+dist
+*/dist
+server/public
+.env
+.env.*
+.git
+.gitignore
+*.md
+.vscode
+.idea
+scripts
+nixpacks.toml
