@@ -1,0 +1,18 @@
+[phases.setup]
+nixPkgs = ["nodejs_20"]
+
+[phases.install]
+cmds = ["npm install --prefix server"]
+
+[phases.build]
+cmds = [
+  "npm install --prefix client",
+  "npm run build --prefix client",
+  "cp -r client/dist server/public",
+  "npm run typecheck --prefix server || true",
+  "npx tsc --project server/tsconfig.json",
+  "cp server/src/db/schema.sql server/dist/db/schema.sql"
+]
+
+[start]
+cmd = "node server/dist/index.js"
