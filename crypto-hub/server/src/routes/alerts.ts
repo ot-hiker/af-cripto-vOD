@@ -46,7 +46,7 @@ router.post('/', async (req: Request, res: Response) => {
 
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const email = req.query.email as string;
+    const email = String(req.query.email || '');
 
     if (!email || !isValidEmail(email)) {
       res.status(400).json({ error: 'Valid email query parameter is required' });
