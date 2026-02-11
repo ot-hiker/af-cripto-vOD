@@ -67,6 +67,25 @@ async function callAI(prompt: string): Promise<{ text: string; model: string }> 
   }
 }
 
+export async function summarizeNewsletter(subject: string, body: string): Promise<string> {
+  const truncatedBody = body.slice(0, 3000);
+  const prompt = `Resuma esta newsletter em 2-3 frases claras e informativas em português do Brasil.
+Foque nos fatos principais, números e empresas mencionadas.
+Não inclua saudações, links ou formatação. Apenas texto corrido.
+
+Assunto: ${subject}
+Conteúdo:
+${truncatedBody}`;
+
+  try {
+    const { text } = await callAI(prompt);
+    return text.trim().slice(0, 500);
+  } catch (err) {
+    console.error(`[AI] Newsletter summarization failed: ${(err as Error).message}`);
+    return body.replace(/https?:\/\/\S+/g, '').replace(/\s{2,}/g, ' ').trim().slice(0, 300);
+  }
+}
+
 export async function classifyNews(
   newsItems: { id: number; title: string; summary: string | null }[]
 ): Promise<void> {
@@ -102,7 +121,7 @@ export async function generateDailySummary(): Promise<string> {
   yesterday.setHours(yesterday.getHours() - 24);
 
   const result = await pool.query(
-    `SELECT title, summary, source_name FROM news
+    `SELECT title, summary, source_name, source_type, published_at FROM news
      WHERE published_at >= $1
      ORDER BY published_at DESC
      LIMIT 50`,
@@ -114,11 +133,17 @@ export async function generateDailySummary(): Promise<string> {
     return 'Nenhuma notícia disponível para o resumo de hoje.';
   }
 
+  const now = new Date();
+  const brDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  const todayStr = brDate.toLocaleDateString('pt-BR', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+  });
+
   const newsText = news
     .map((n, i) => `${i + 1}. [${n.source_name}] ${n.title}: ${n.summary || ''}`)
     .join('\n');
 
-  const prompt = `Você é um analista de cripto e startups. Analise as seguintes ${news.length} notícias das últimas 24h e gere um resumo executivo em português do Brasil.
+  const prompt = `Você é um analista de cripto e startups. A data de HOJE é ${todayStr}. Analise as seguintes ${news.length} notícias das últimas 24h e gere um resumo executivo em português do Brasil.
 
 Estruture em seções:
 1) **Destaques do Dia** (3-5 pontos principais)
@@ -127,6 +152,7 @@ Estruture em seções:
 4) **O que ficar de olho**
 
 Use markdown. Seja conciso mas informativo.
+Ao mencionar datas, use a data correta de hoje: ${todayStr}.
 
 Notícias:
 ${newsText}`;
@@ -153,6 +179,11 @@ ${newsText}`;
 export async function chatWithContext(
   message: string
 ): Promise<{ reply: string; sources: { id: number; title: string; url: string | null }[] }> {
+  const todayStr = new Date().toLocaleDateString('pt-BR', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    timeZone: 'America/Sao_Paulo',
+  });
+
   // Search for relevant news using keyword matching
   const keywords = message
     .toLowerCase()
@@ -198,7 +229,7 @@ export async function chatWithContext(
     )
     .join('\n');
 
-  const prompt = `Baseado nas seguintes notícias recentes, responda a pergunta do usuário em português do Brasil.
+  const prompt = `A data de hoje é ${todayStr}. Baseado nas seguintes notícias recentes, responda a pergunta do usuário em português do Brasil.
 Seja conciso e direto. Cite os IDs das notícias que você usou na resposta (formato: [ID]).
 
 Notícias disponíveis:

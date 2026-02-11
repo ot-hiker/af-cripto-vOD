@@ -1,10 +1,42 @@
 const BASE_URL = '/api';
 
+// Auth token management
+let authToken: string | null = sessionStorage.getItem('auth_token');
+
+export function setAuthToken(token: string) {
+  authToken = token;
+  sessionStorage.setItem('auth_token', token);
+}
+
+export function clearAuthToken() {
+  authToken = null;
+  sessionStorage.removeItem('auth_token');
+}
+
+export function getAuthToken() {
+  return authToken;
+}
+
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...((options?.headers as Record<string, string>) || {}),
+  };
+
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+  }
+
   const response = await fetch(`${BASE_URL}${url}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
+    headers,
   });
+
+  if (response.status === 401) {
+    clearAuthToken();
+    window.location.reload();
+    throw new Error('Unauthorized');
+  }
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: 'Unknown error' }));
@@ -13,6 +45,24 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
 
   return response.json();
 }
+
+// Auth API
+export const authApi = {
+  login: async (password: string) => {
+    const response = await fetch(`${BASE_URL}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    return response.json();
+  },
+  check: async () => {
+    const headers: Record<string, string> = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    const response = await fetch(`${BASE_URL}/auth/check`, { headers });
+    return response.json();
+  },
+};
 
 // News API
 export const newsApi = {

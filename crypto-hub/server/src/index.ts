@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
 import { connectDB, initSchema } from './db/index';
 import newsRouter from './routes/news';
@@ -14,6 +15,18 @@ import { fetchBtcPrice } from './services/priceService';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+const SITE_PASSWORD = process.env.SITE_PASSWORD || '';
+const AUTH_TOKEN_SECRET = crypto.randomBytes(32).toString('hex');
+const validTokens = new Set<string>();
+
+function generateAuthToken(): string {
+  const token = crypto.createHmac('sha256', AUTH_TOKEN_SECRET)
+    .update(Date.now().toString() + Math.random().toString())
+    .digest('hex');
+  validTokens.add(token);
+  return token;
+}
 
 let lastNewsFetch = 'never';
 
@@ -31,6 +44,44 @@ const globalLimiter = rateLimit({
   legacyHeaders: false,
 });
 app.use('/api', globalLimiter);
+
+// Auth routes
+app.post('/api/auth/login', (req, res) => {
+  const { password } = req.body;
+
+  if (!SITE_PASSWORD) {
+    return res.json({ success: true, token: 'open' });
+  }
+
+  if (password === SITE_PASSWORD) {
+    const token = generateAuthToken();
+    return res.json({ success: true, token });
+  }
+
+  return res.status(401).json({ success: false, error: 'Senha incorreta' });
+});
+
+app.get('/api/auth/check', (req, res) => {
+  if (!SITE_PASSWORD) {
+    return res.json({ authenticated: true });
+  }
+
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (token && (token === 'open' || validTokens.has(token))) {
+    return res.json({ authenticated: true });
+  }
+
+  return res.json({ authenticated: false });
+});
+
+// Auth middleware (after auth routes, before other API routes)
+app.use('/api', (req, res, next) => {
+  if (req.path.startsWith('/auth') || req.path === '/health') return next();
+  if (!SITE_PASSWORD) return next();
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (token && (token === 'open' || validTokens.has(token))) return next();
+  res.status(401).json({ error: 'Não autorizado. Faça login primeiro.' });
+});
 
 // Health check
 app.get('/api/health', async (_req, res) => {
@@ -80,6 +131,9 @@ async function bootstrap(): Promise<void> {
       console.log(`\n🚀 CryptoHub server running on port ${PORT}`);
     });
 
+    if (SITE_PASSWORD) console.log('[AUTH] Password protection ENABLED');
+    else console.log('[AUTH] No SITE_PASSWORD set — open access');
+
     // 2. Connect to DB
     try {
       await connectDB();
@@ -87,10 +141,6 @@ async function bootstrap(): Promise<void> {
       await initSchema();
     } catch (err) {
       console.error('[BOOT] Database connection failed:', err);
-      // Optional: decide if we want to crash or keep running.
-      // For now, valid strategy is to keep running so health check passes,
-      // but maybe set a status flag.
-      // process.exit(1); // Removed to allow health check to pass even if DB fails initially
     }
 
     // 4. Register cron jobs

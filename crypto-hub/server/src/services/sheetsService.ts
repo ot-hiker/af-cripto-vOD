@@ -1,5 +1,6 @@
 import { google } from 'googleapis';
 import pool from '../db/index';
+import { summarizeNewsletter, classifyNews } from './aiService';
 
 function getAuthClient() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -40,6 +41,7 @@ export async function fetchNewNewsletters(): Promise<number> {
     const dataRows = rows.slice(1);
     let inserted = 0;
     const rowsToUpdate: number[] = [];
+    const newNewsIds: { id: number; title: string; summary: string | null }[] = [];
 
     for (let i = 0; i < dataRows.length; i++) {
       const [date, from, subject, body, processed] = dataRows[i];
@@ -48,7 +50,16 @@ export async function fetchNewNewsletters(): Promise<number> {
       if (!subject || !from) continue;
 
       const content = (body || '').slice(0, 5000);
-      const summary = content.slice(0, 500);
+
+      let summary: string;
+      try {
+        summary = await summarizeNewsletter(subject, content);
+        console.log(`[SHEETS] AI summary generated for: ${subject.slice(0, 50)}...`);
+      } catch (err) {
+        summary = content.replace(/https?:\/\/\S+/g, '').replace(/\s{2,}/g, ' ').trim().slice(0, 300);
+        console.log(`[SHEETS] AI summary failed, using fallback for: ${subject.slice(0, 50)}...`);
+      }
+
       const publishedAt = date ? new Date(date) : new Date();
 
       try {
@@ -62,6 +73,7 @@ export async function fetchNewNewsletters(): Promise<number> {
 
         if (result.rowCount && result.rowCount > 0) {
           inserted++;
+          newNewsIds.push({ id: result.rows[0].id, title: subject, summary });
         }
         rowsToUpdate.push(i + 2); // +2 for 1-indexed and header row
       } catch (err) {
@@ -85,7 +97,16 @@ export async function fetchNewNewsletters(): Promise<number> {
       });
     }
 
-    console.log(`[SHEETS] Inserted ${inserted} newsletters`);
+    // Classify new newsletters with AI tags
+    if (newNewsIds.length > 0) {
+      try {
+        await classifyNews(newNewsIds);
+      } catch (err) {
+        console.error(`[SHEETS] Classification failed: ${(err as Error).message}`);
+      }
+    }
+
+    console.log(`[SHEETS] Inserted ${inserted} newsletters (with AI summaries)`);
     return inserted;
   } catch (err) {
     console.error(`[SHEETS] Error: ${(err as Error).message}`);
